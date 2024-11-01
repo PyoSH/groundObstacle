@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package>
-    <name>ma-lo-cpp</name>
+    <name>groundObstacle</name>
     <version>0.0.0</version>
     <description>MApping and LOcalization with CPP package</description>
 

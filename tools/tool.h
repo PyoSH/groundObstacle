@@ -18,10 +18,8 @@
 #include <nanoflann.hpp>
 namespace tool
 {
-  Eigen::VectorXf eigen2xyzrpy(Eigen::Matrix4f mat);
-  Eigen::Matrix4f xyzrpy2eigen(float x, float y, float z, float roll, float pitch, float yaw);
   Eigen::Matrix3f get_rotation_matrix(float roll, float pitch, float yaw);
-  void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud);
+  double extractClosestPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud);
   void removeGroundPlaneWithNormal(pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud, float distance_threshold, float normal_threshold);
 }
 #endif

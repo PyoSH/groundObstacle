@@ -8,6 +8,7 @@ find_package(catkin REQUIRED COMPONENTS
         roscpp
         rospy        
         sensor_msgs
+        std_msgs
 )
 
 catkin_package()
@@ -25,12 +26,8 @@ set(tool_source
         tools/tool.h
         tools/nanoflann.hpp)
 
-set(detection_source
-        detect/src/detect.cpp
-        detect/src/detect.h)
-
-add_executable(detectGroundObstacle detect/main.cpp ${detection_source} ${tool_source})
-target_link_libraries(mergePC
+add_executable(detectGroundObstacle detect/main.cpp ${tool_source})
+target_link_libraries(detectGroundObstacle
         ${catkin_LIBRARIES} ${PCL_LIBRARIES})        
 
 # tool-merge PCs

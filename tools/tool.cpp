@@ -2,20 +2,6 @@
 
 namespace tool
 {
-
-Eigen::VectorXf eigen2xyzrpy(Eigen::Matrix4f mat)
-{
-  Eigen::VectorXf result(6);
-  mat2xyzrpy(eigen2mat(mat), &result[0], &result[1], &result[2], &result[3], &result[4], &result[5]);
-  return result;
-}
-
-Eigen::Matrix4f xyzrpy2eigen(float x, float y, float z, float roll, float pitch, float yaw)
-{
-  Eigen::Matrix4f result =  mat2eigen(xyzrpy2mat(x,y,z,roll,pitch,yaw));
-  return result;
-}
-
 Eigen::Matrix3f get_rotation_matrix(float roll, float pitch, float yaw) {
     // Rx: roll에 대한 회전 행렬
     Eigen::Matrix3f Rx;
@@ -41,43 +27,58 @@ Eigen::Matrix3f get_rotation_matrix(float roll, float pitch, float yaw) {
     return rotation_matrix;
 }
 
-void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud, 
-                       pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud) {
-  // Create a segmentation object for the plane model
+double extractClosestPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud, 
+                         pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud) {
   pcl::SACSegmentation<pcl::PointXYZ> seg;
   pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
   pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
   seg.setOptimizeCoefficients(true);
   seg.setModelType(pcl::SACMODEL_PLANE);
   seg.setMethodType(pcl::SAC_RANSAC);
-  seg.setDistanceThreshold(0.01);  // 조정 가능한 거리 임계값 (바닥 면 허용 오차)
+  seg.setDistanceThreshold(0.01);
 
-  // ROI setting
-  pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ROI(new pcl::PointCloud<pcl::PointXYZ>);
-  pcl::PassThrough<pcl::PointXYZ> pass;
-  pass.setInputCloud(input_cloud);
-  pass.setFilterFieldName("y");
-  pass.setFilterLimits(-1.5, -0.2);
-  // pass.setFilterLimitsNegative(true);
-  // pass.filter(*pc_ROI);
-  pass.filter(*output_cloud);
+  double min_z = std::numeric_limits<double>::max();
+  pcl::PointIndices::Ptr closest_inliers(new pcl::PointIndices);
+  pcl::ModelCoefficients::Ptr closest_coefficients(new pcl::ModelCoefficients);
 
-  // Perform segmentation to find inliers that represent the ground plane
-  // seg.setInputCloud(pc_ROI);
-  // seg.segment(*inliers, *coefficients);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>(*input_cloud));
 
-  // if (inliers->indices.empty()) {
-  //     std::cerr << "Could not estimate a planar model for the given dataset." << std::endl;
-  //     return;
-  // }
+  while (!cloud_filtered->points.empty()) {
+      seg.setInputCloud(cloud_filtered);
+      seg.segment(*inliers, *coefficients);
 
-  // Extract the points that are not part of the ground plane
-  // pcl::ExtractIndices<pcl::PointXYZ> extract;
-  // extract.setInputCloud(pc_ROI);
-  // extract.setIndices(inliers);
-  // extract.setNegative(true);  // true로 설정하여 평면 이외의 점들만 추출
-  // extract.filter(*output_cloud);
+      if (inliers->indices.empty()) {
+          break;
+      }
+
+      // Extracting the centroid z-value of the current plane
+      double avg_z = 0.0;
+      for (int idx : inliers->indices) {
+          avg_z += cloud_filtered->points[idx].z;
+      }
+      avg_z /= inliers->indices.size();
+
+      if (avg_z < min_z) {
+          min_z = avg_z;
+          *closest_inliers = *inliers;
+          *closest_coefficients = *coefficients;
+      }
+
+      pcl::ExtractIndices<pcl::PointXYZ> extract;
+      extract.setInputCloud(cloud_filtered);
+      extract.setIndices(inliers);
+      extract.setNegative(true);
+      extract.filter(*cloud_filtered);
+  }
+
+  // 최종적으로 가장 가까운 평면을 output_cloud에 복사
+  pcl::ExtractIndices<pcl::PointXYZ> extract;
+  extract.setInputCloud(input_cloud);
+  extract.setIndices(closest_inliers);
+  extract.setNegative(false);  // closest plane만 추출
+  extract.filter(*output_cloud);
 }
+
 
 void removeGroundPlaneWithNormal(pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud, 
                                  pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud, 

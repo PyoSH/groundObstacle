@@ -1,120 +1,89 @@
-#include "src/map_RT.h"
+#include <iostream>
+#include <eigen3/Eigen/Dense>
+#include <ros/ros.h>
+#include "std_msgs/Float64.h"
+#include <pcl/point_types.h>  // 포인트 타입 정의
+#include <pcl/point_cloud.h>  // 포인트 클라우드 클래스
+#include <pcl_conversions/pcl_conversions.h>  // ros msg -> point cloud
+#include <pcl/filters/passthrough.h>  // 범위 필터
+#include <pcl/filters/voxel_grid.h>  // 다운샘플링 필터
+#include <pcl/filters/passthrough.h>  // 범위 필터
+#include "tool.h"
 
-std::deque<Eigen::Matrix4f> vec_poses;
-std::deque<double> vec_poses_time;
-std::deque<Eigen::Matrix4Xf> vec_scan;
-std::deque<double> vec_scan_time;
-Eigen::Matrix4f tf_robot2map;
-
-map_rt mapGenerator;
 void callback_scan(const sensor_msgs::PointCloud2::ConstPtr& msg);
-void callback_pose(const nav_msgs::Odometry::ConstPtr& msg);
-void check_data();
+double calculateAverageZ(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud);
 
 int main(int argc,char **argv) {
-    ros::init(argc, argv, "ros_mapping");
+    ros::init(argc, argv, "groundObstacle");
     std::cout<<ros::this_node::getName()<<std::endl;
     ros::NodeHandle nh;
 
-    ros::Subscriber sub_scan = nh.subscribe<sensor_msgs::PointCloud2>("/merged_pointcloud", 100, callback_scan);
-    ros::Subscriber sub_pose = nh.subscribe<nav_msgs::Odometry>("/b1_controller/odom", 100, callback_pose);
+    ros::Subscriber sub_scan = nh.subscribe<sensor_msgs::PointCloud2>("/camera/depth/color/points", 100, callback_scan);
 
     ros::spin();
 
     return 0;
 }
 
-/*
- * 현재) 발행 시간에 기반해서 데이터를 쳐낸다(시동기화)
- * 희망) 지도 작성에 사용된 이전 포즈 & 현재 포즈의 유클리드 거리로 거르는 조건도 추가하자.
- */
-void check_data() {
-    // std::cout<<"check data init"<<std::endl;
-    while(!vec_poses.empty() && !vec_scan.empty()) {
-        // std::cout<<"check data - if case"<<std::endl;
-        // std::cout<<"POSE t :" <<vec_poses_time[0] << std::setprecision(9)<<
-            // "||" <<"SCAN t :" <<vec_scan_time[0] << std::setprecision(9) <<std::endl;
-        if(fabs(vec_poses_time[0] - vec_scan_time[0]) > 0.1) {
-            if(vec_poses_time[0] > vec_scan_time[0]) {
-                vec_scan.pop_front();
-                vec_scan_time.pop_front();
-            }else {
-                vec_poses.pop_front();
-                vec_poses_time.pop_front();
-            }
-        }else {
-            // std::cout<<"check data - else case"<<std::endl;
-            mapGenerator.updateMap(vec_poses[0], vec_scan[0], vec_poses_time[0], vec_scan_time[0]);
-            vec_scan.pop_front();
-            vec_scan_time.pop_front();
-            vec_poses.pop_front();
-            vec_poses_time.pop_front();
-        }
-    }
-    // std::cout<<"check data END"<<std::endl;
-}
-
-/*
- * 3D 점군 받았을 때 deque 구조로 넣을 수 있도록 하기
- */
 void callback_scan(const sensor_msgs::PointCloud2::ConstPtr& msg) {
-    // std::cout<<"CB - SCAN init"<<std::endl;
+    std::cout<<"CB - SCAN init"<<std::endl;
     pcl::PointCloud<pcl::PointXYZ>::Ptr pc_xyz(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::fromROSMsg(*msg, *pc_xyz);
 
+    // 1. down sampling
     pcl::PointCloud<pcl::PointXYZ>::Ptr pc_vx_filtered(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
     voxel_filter.setInputCloud(pc_xyz);
     voxel_filter.setLeafSize(0.05, 0.05, 0.05);
     voxel_filter.filter(*pc_vx_filtered);
 
-    pcl::PassThrough<pcl::PointXYZ> pass;
-    pass.setInputCloud(pc_vx_filtered);
-    pass.setFilterFieldName("z");
-    pass.setFilterLimits(-2.0, 2.0);  // 원하는 z 값 범위를 설정
+    // 2. set ROI
+    pcl::PassThrough<pcl::PointXYZ> pass_x;
+    pass_x.setInputCloud(pc_vx_filtered);
+    pass_x.setFilterFieldName("x");
+    pass_x.setFilterLimits(-0.15, 0.15); 
+    pcl::PointCloud<pcl::PointXYZ>::Ptr pc_filtered_x(new pcl::PointCloud<pcl::PointXYZ>);
+    pass_x.filter(*pc_filtered_x);
+
+    pcl::PassThrough<pcl::PointXYZ> pass_z;
+    pass_z.setInputCloud(pc_filtered_x);
+    pass_z.setFilterFieldName("z");
+    pass_z.setFilterLimits(0.1, 0.7); // 원하는 z축 범위로 설정
     pcl::PointCloud<pcl::PointXYZ>::Ptr pc_filtered(new pcl::PointCloud<pcl::PointXYZ>);
-    pass.filter(*pc_filtered);
+    pass_z.filter(*pc_filtered);
 
-    int pointNum = pc_filtered->points.size();
-    Eigen::Matrix4Xf eigenScan = Eigen::Matrix4Xf::Ones(4, 1);
-    int usefulPoint = 0;
-    // std::cout<<"CB - pointNum "<< pointNum <<std::endl;
+    // 3. calc closest z? plane
+    double mean_z = 0;
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr pc_no_ground(new pcl::PointCloud<pcl::PointXYZ>);
+    // min_z = tool::extractClosestPlane(pc_filtered, pc_no_ground);
 
-    for(int i = 0; i < pointNum; i++) {
-        // std::cout<<"CB - SCAN 2"<<std::endl;
-        pcl::PointXYZ currPoint = pc_filtered->points[i];
-        // std::cout<<"CB - SCAN 3"<<std::endl;
-        float dist = sqrt(pow(currPoint.x,2) + pow(currPoint.y,2) + pow(currPoint.z,2));
-        if(0.2 < dist && dist < 5) {
-            usefulPoint++;
-            eigenScan.conservativeResize(4, usefulPoint);
-            eigenScan(0,usefulPoint-1) = currPoint.x;
-            eigenScan(1,usefulPoint-1) = currPoint.y;
-            eigenScan(2,usefulPoint-1) = currPoint.z;
-            eigenScan(3,usefulPoint-1) = 1;
-        }
-    }
-    vec_scan.emplace_back(eigenScan);
-    // std::cout<<"CB - SCAN 5"<<std::endl;
-    vec_scan_time.emplace_back(msg->header.stamp.toSec());
-    check_data();
-    // std::cout<<"CB - SCAN END"<<std::endl;
+    double t = msg->header.stamp.toSec();
+    mean_z = calculateAverageZ(pc_filtered);
+
+    std_msgs::Float64 output_msg;
+    output_msg.data = mean_z;
+    static ros::Publisher pub_obstacleDist = ros::NodeHandle().advertise<std_msgs::Float64>("/distance_obstacle", 100);
+    pub_obstacleDist.publish(output_msg);
+
+    // pack into ROS msg with avg time 
+    sensor_msgs::PointCloud2 output_msg_pc;
+    pcl::toROSMsg(*pc_filtered, output_msg_pc);
+    output_msg_pc.header.frame_id = "camera_link";
+    output_msg_pc.header.stamp = ros::Time(t);
+    
+    // pub them
+    static ros::Publisher pub_PC = ros::NodeHandle().advertise<sensor_msgs::PointCloud2>("/base_pointcloud", 100);
+    pub_PC.publish(output_msg_pc);
+    std::cout<<"CB - SCAN END"<<std::endl;
 }
 
-void callback_pose(const nav_msgs::Odometry::ConstPtr& msg) {
-    // std::cout<<"CB - POSE init"<<std::endl;
-    Eigen::Matrix4f eigenPose;
+double calculateAverageZ(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud) {
+    double sum_z = 0.0;
+    int point_count = cloud->points.size();
 
-    tf::Quaternion quat(msg->pose.pose.orientation.x, msg->pose.pose.orientation.y, msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
-    tf::Matrix3x3 m(quat);
-    eigenPose << m[0][0], m[0][1], m[0][2], msg->pose.pose.position.x,
-                 m[1][0], m[1][1], m[1][2], msg->pose.pose.position.y,
-                 m[2][0], m[2][1], m[2][2], msg->pose.pose.position.z,
-                 0, 0, 0, 1;
+    for (const auto& point : cloud->points) {
+        sum_z += point.z;
+    }
 
-    // eigenPose = eigenPose * tf_robot2map;
-    vec_poses.emplace_back(eigenPose);
-    vec_poses_time.emplace_back(msg->header.stamp.toSec());
-    check_data();
-    // std::cout<<"CB - POSE END"<<std::endl;
+    return (point_count > 0) ? sum_z / point_count : 0.0;
 }
