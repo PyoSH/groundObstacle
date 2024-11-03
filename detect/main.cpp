@@ -45,8 +45,15 @@ void callback_scan(const sensor_msgs::PointCloud2::ConstPtr& msg) {
     pcl::PointCloud<pcl::PointXYZ>::Ptr pc_filtered_x(new pcl::PointCloud<pcl::PointXYZ>);
     pass_x.filter(*pc_filtered_x);
 
+    pcl::PassThrough<pcl::PointXYZ> pass_y;
+    pass_y.setInputCloud(pc_vx_filtered_x);
+    pass_y.setFilterFieldName("y");
+    pass_y.setFilterLimits(-0.3, -0.1); // !!!!! 줄자 대고 확인해서 변경하기
+    pcl::PointCloud<pcl::PointXYZ>::Ptr pc_filtered_y(new pcl::PointCloud<pcl::PointXYZ>);
+    pass_y.filter(*pc_filtered_y);
+
     pcl::PassThrough<pcl::PointXYZ> pass_z;
-    pass_z.setInputCloud(pc_filtered_x);
+    pass_z.setInputCloud(pc_filtered_y);
     pass_z.setFilterFieldName("z");
     pass_z.setFilterLimits(0.1, 0.7); // 원하는 z축 범위로 설정
     pcl::PointCloud<pcl::PointXYZ>::Ptr pc_filtered(new pcl::PointCloud<pcl::PointXYZ>);
